@@ -1,0 +1,235 @@
+\documentclass[A4,10pt]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{latexsym}
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage{marvosym}
+\usepackage[usenames,dvipsnames]{xcolor}
+\usepackage{verbatim}
+\usepackage{enumitem}
+\usepackage[
+  colorlinks=true,
+  urlcolor=black,
+  linkcolor=black
+]{hyperref}
+\usepackage[normalem]{ulem}
+
+\definecolor{linkgray}{HTML}{AAAAAA}
+
+\newcommand{\hrefuline}[2]{%
+  \href{#1}{#2\llap{\textcolor{linkgray}{\underline{\phantom{#2}}}}}%
+}
+\newcommand{\hrefplain}[2]{\href{#1}{#2}}
+
+\usepackage{fancyhdr}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+\usepackage{microtype}
+\input{glyphtounicode}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+
+\addtolength{\oddsidemargin}{-0.6in}
+\addtolength{\evensidemargin}{-0.6in}
+\addtolength{\textwidth}{1.2in}
+\addtolength{\topmargin}{-0.7in}
+\addtolength{\textheight}{1.4in}
+
+\urlstyle{same}
+\raggedbottom
+\raggedright
+\setlength{\tabcolsep}{0in}
+
+\pdfgentounicode=1
+
+%-------------------------
+% Section Formatting
+%-------------------------
+\titleformat{\section}{
+  \vspace{-6pt}\scshape\raggedright\large
+}{}{0em}{}[\color{black}\titlerule \vspace{-5pt}]
+
+%-------------------------
+% Custom Commands
+%-------------------------
+\newcommand{\resumeItem}[1]{
+  \item\small{#1 \vspace{-2pt}}
+}
+
+\newcommand{\resumeSubheading}[4]{
+  \vspace{-2pt}\item
+    \begin{tabular*}{1.0\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & \textbf{\small #2} \\
+      \textit{\small#3} & \textit{\small #4} \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\newcommand{\resumeEduHeading}[4]{
+  \vspace{-2pt}\item
+    \begin{tabular*}{1.0\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & \textbf{\small #2} \\
+      \textit{\small #3} & \textit{\small #4} \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\newcommand{\resumeProjectHeading}[1]{
+  \vspace{-2pt}\item
+    \begin{tabular*}{1.0\textwidth}{l}
+      \small\textbf{#1} \\
+    \end{tabular*}\vspace{-2pt}
+}
+
+\newcommand{\techstack}[1]{
+  \vspace{2pt}
+  {\small\hspace{0.01in}\textit{Tech: #1}}
+  \vspace{-2pt}
+}
+
+\renewcommand\labelitemii{$\vcenter{\hbox{\tiny$\bullet$}}$}
+
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0.0in, label={}]}
+\newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
+\newcommand{\resumeItemListStart}{\begin{itemize}[leftmargin=0.15in]}
+\newcommand{\resumeItemListEnd}{\end{itemize}\vspace{-5pt}}
+
+
+%============================================================
+%                        DOCUMENT
+%============================================================
+\begin{document}
+
+%-------------------------
+% HEADER
+%-------------------------
+\begin{center}
+    {\large \scshape Vishesh Paliwal} \\ \vspace{3pt}
+    \small
+    +91-9416257847 $|$
+    \hrefuline{mailto:vishesh.23bcs10013@sst.scaler.com}{vishesh.23bcs10013@sst.scaler.com} $|$
+    \hrefuline{https://visheshpaliwal.dev}{visheshpaliwal.dev} $|$
+    \hrefuline{https://www.linkedin.com/in/vishesh-paliwal-42764b2ab/}{LinkedIn} $|$
+    \hrefuline{https://github.com/Vishesh-Paliwal}{GitHub}
+\end{center}
+
+%-------------------------
+% EXPERIENCE
+%-------------------------
+\section{Experience}
+\resumeSubHeadingListStart
+
+  \resumeSubheading
+    {Kong}{2026 -- Present}
+    {Software Engineer Intern, Observability}{Bengaluru, India}
+    \resumeItemListStart
+      \resumeItem{Optimized \textbf{Apache Druid} segment layout and ingestion to sustain \textbf{5B+ logs/week}, absorbing traffic spikes from 20M to \textbf{300M logs/hour} (a \textbf{1400\% surge}) without query degradation.}
+      \resumeItem{Working on the \textbf{request--response evolution} feature in Kong's observability data plane --- tracking how API request and response shapes change over time across deployed services.}
+      \resumeItem{Working across the observability stack in \textbf{Go} --- \textbf{Kubernetes} (\textbf{AWS EKS}), \textbf{Kafka}, \textbf{Zookeeper}, \textbf{Druid}, and \textbf{Datadog}.}
+    \resumeItemListEnd
+
+  \resumeSubheading
+    {Lemnisca}{Mar 2026 -- May 2026}
+    {AI Engineer Intern}{Bengaluru, India}
+    \resumeItemListStart
+      \resumeItem{Built \textbf{Avira}, a production RAG chatbot for bioprocess scientists with query decomposition, \textbf{Gemini File Search} retrieval, page-accurate citations, and multi-mode querying (strict/augmented/rewrite).}
+      \resumeItem{Engineered a \textbf{multi-agent fermentation debate system} on \textbf{AgentScope} with 7 specialist agents, moderator-driven consensus, and persistent cross-session memory (\textbf{ReMeLight + ReMe}).}
+      \resumeItem{Deployed services on \textbf{Google Cloud Run} with full observability via \textbf{PostHog AI}.}
+    \resumeItemListEnd
+
+  \resumeSubheading
+    {Rocketium}{Nov 2024 -- Dec 2025}
+    {SDE Intern (Fullstack \& DevOps)}{Bengaluru, India}
+    \resumeItemListStart
+      \resumeItem{Implemented \textbf{CI/CD pipeline} via \textbf{CircleCI} and a \textbf{GitHub Probot App}, automating deployments and reducing lead time by \textbf{25\%}.}
+      \resumeItem{Built full-stack observability with \textbf{OpenTelemetry} and \textbf{Kloudmate}, improving reliability and \textbf{MTTR by 30\%}.}
+      \resumeItem{Designed \textbf{HTML export services} with a \textbf{recovery DP compression algorithm} for motion ads, keeping files strictly under \textbf{150KB} without visual fidelity loss.}
+    \resumeItemListEnd
+
+\resumeSubHeadingListEnd
+
+%-------------------------
+% PROJECTS
+%-------------------------
+\section{Projects}
+\resumeSubHeadingListStart
+
+  \resumeProjectHeading
+    {\hrefplain{https://github.com/Vishesh-Paliwal/The-Jury}{The Jury}}
+  \techstack{Kotlin Multiplatform, Compose MP, Koog AI, SQLDelight, Koin, Voyager, Coroutines}
+    \resumeItemListStart
+      \resumeItem{Cross-platform (Android + Desktop) AI jury simulator with multi-agent personas; supports debate, follow-ups, and collective verdicts (Parallel + Jury modes).}
+      \resumeItem{Real-time streaming with thinking indicators, persistent history (\textbf{SQLDelight}), clean architecture (\textbf{Koin DI + Voyager}), multi-agent orchestration via \textbf{Koog}.}
+      \resumeItem{Type-safe \textbf{Kotlin Flows} and Material 3 UI; shared business logic across Android and Desktop targets.}
+    \resumeItemListEnd
+
+\resumeSubHeadingListEnd
+
+%-------------------------
+% EDUCATION
+%-------------------------
+\section{Education}
+\resumeSubHeadingListStart
+
+  \resumeEduHeading
+    {Scaler School of Technology}{July 2023 -- July 2027}
+    {Bachelor of Science (Honours) in Computer Science}{Bengaluru, India}
+    \resumeItemListStart
+      \resumeItem{CGR: \textbf{9.14}}
+    \resumeItemListEnd
+
+\resumeSubHeadingListEnd
+
+%-------------------------
+% TECHNICAL SKILLS
+%-------------------------
+\section{Technical Skills}
+\begin{itemize}[leftmargin=0.0in, label={}]
+\small{\item{
+\begin{tabular}{@{}l@{\hspace{1.5em}}l}
+  \textbf{Languages}              & Java, Python, Go, C++, JavaScript, TypeScript, Kotlin, SQL \\[3pt]
+  \textbf{Backend \& Frameworks}  & Node.js, React.js, Next.js, Express.js, FastAPI, Spring Boot, Prisma, Jetpack Compose \\[3pt]
+  \textbf{Infrastructure}         & Kubernetes, AWS EKS, Docker, Kafka, Zookeeper, Druid, Datadog, OpenTelemetry \\[3pt]
+  \textbf{Cloud \& DevOps}        & GCP (Cloud Run, GCS, Secret Manager), AWS (Lambda, SQS), CircleCI, Kloudmate \\[3pt]
+  \textbf{Databases}              & PostgreSQL, MySQL, MongoDB, Redis, Supabase \\[3pt]
+  \textbf{AI \& Data}             & AgentScope, Gemini API, RAG Pipelines, LangSmith, PostHog AI, Portkey, Supermemory \\[3pt]
+  \textbf{Core Concepts}          & Data Structures \& Algorithms, OOP, System Design, REST APIs \\[3pt]
+  \textbf{Tools}                  & Git, Linux, Postman, Figma \\
+\end{tabular}
+}}
+\end{itemize}
+
+%-------------------------
+% ACHIEVEMENTS
+%-------------------------
+\section{Achievements}
+\resumeSubHeadingListStart
+  \item
+  \resumeItemListStart
+    \resumeItem{\textbf{Winner (1st Place) -- CCD Alberta Hackathon:} Won \textbf{\$1000} in a global STEM hackathon. \hrefuline{https://www.linkedin.com/posts/brainstem-alliance_stem-stemeducation-stemcareers-activity-7405048889361350656-Z2o3}{[Post Link]}}
+    \resumeItem{\textbf{Runner-up (2nd Place) -- 48-Hour AI Hackathon (Scaler x GahanAI):} \textbf{\rupee 15K} prize for a YOLOv8 lane-cutting vehicle detection system. \hrefuline{https://www.linkedin.com/posts/vishesh-paliwal-42764b2ab_hackathon-ai-studentlife-activity-7342060751290814465-w4y9}{[Post Link]}}
+    \resumeItem{\textbf{Competitive Programming:} Meta Hacker Cup 2024 Round 2 (\textbf{Global Rank 1174}); CodeChef \textbf{3*} (Max 1760), World Rank \textbf{65} in Starters; \textbf{AIR 24} H42 Srijan, \textbf{AIR 25} Pass the Baton.}
+    \resumeItem{\textbf{Open Source:} Merged PRs in \textbf{Google (Blockly)}, \textbf{Apache (Gravitino)}, and \textbf{Electron}.}
+  \resumeItemListEnd
+\resumeSubHeadingListEnd
+
+%-------------------------
+% LEADERSHIP & MENTORSHIP
+%-------------------------
+\section{Leadership \& Mentorship}
+\resumeSubHeadingListStart
+
+  \resumeSubheading
+    {Scaler School of Technology}{April 2024 -- Nov 2024}
+    {Teaching Assistant (Data Structures \& Algorithms)}{Bengaluru, India}
+    \resumeItemListStart
+      \resumeItem{Mentored \textbf{52 students} in DSA; facilitated an average batch score of over \textbf{80\%}.}
+    \resumeItemListEnd
+
+\resumeSubHeadingListEnd
+
+\end{document}
