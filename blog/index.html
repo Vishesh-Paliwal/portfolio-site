@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Blogs &middot; Vishesh Paliwal</title>
+  <meta name="description" content="Notes on systems, observability, and the things I break at work." />
+  <meta name="author" content="Vishesh Paliwal" />
+  <meta property="og:title" content="Writing &middot; Vishesh Paliwal" />
+  <meta property="og:description" content="Notes on systems, observability, and the things I break at work." />
+  <meta property="og:type" content="website" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>V</text></svg>" />
+  <link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+  <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle color theme">
+    <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+    <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+  </button>
+
+  <main>
+    <a href="../index.html" class="backlink">&larr; home</a>
+
+    <header class="hero">
+      <h1>Blogs</h1>
+      <p class="tagline">Notes on systems, observability, and the things I break at work.</p>
+    </header>
+
+    <section class="block" aria-label="Posts">
+      <ul class="post-list">
+        <li>
+          <a class="post-link" href="druid-segments.html">
+            <h3>Druid segments, partitioning, and the hot key that broke my assumptions</h3>
+            <span class="date">Jul 2026</span>
+          </a>
+          <p class="summary">
+            What a Druid segment actually is, how primary and secondary partitioning work, the difference between hash and range partitioning, and how one very large tenant quietly produced segments many times larger than the configured limit, with the ingestion tasks reporting success the whole time.
+          </p>
+        </li>
+      </ul>
+    </section>
+
+    <footer>
+      <p>&copy; <span id="year"></span> Vishesh Paliwal &middot; <a href="mailto:vishesh.23bcs10013@sst.scaler.com">say hi</a></p>
+    </footer>
+  </main>
+
+  <script src="../script.js"></script>
+</body>
+</html>

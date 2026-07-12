@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Druid segments, partitioning, and the hot key that broke my assumptions &middot; Vishesh Paliwal</title>
+  <meta name="description" content="What a Druid segment is, how hash and range partitioning work, and how one large tenant quietly produced segments many times over the configured limit." />
+  <meta name="author" content="Vishesh Paliwal" />
+  <meta property="og:title" content="Druid segments, partitioning, and the hot key that broke my assumptions" />
+  <meta property="og:description" content="What a Druid segment is, how hash and range partitioning work, and how one large tenant quietly produced oversized segments." />
+  <meta property="og:type" content="article" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>V</text></svg>" />
+  <link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+  <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle color theme">
+    <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+    <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+  </button>
+
+  <main>
+    <a href="index.html" class="backlink">&larr; writing</a>
+
+    <article>
+      <header class="post-header">
+        <h1>Druid segments, partitioning, and the hot key that broke my assumptions</h1>
+        <p class="post-meta">
+          <span>Jul 10, 2026</span>
+          <span class="dot">&middot;</span>
+          <span>~12 min read</span>
+        </p>
+        <p style="margin-top:14px">
+          <span class="tag">druid</span>
+          <span class="tag">observability</span>
+          <span class="tag">data-skew</span>
+        </p>
+      </header>
+
+      <div class="prose">
+        <p>
+          At work we run <a href="https://druid.apache.org/">Apache Druid</a> as the storage and query engine behind our observability platform for logs ; and logs on the order of five billion a week flow through it. For a long time everything behaved. Then one tenant&rsquo;s queries started getting slow, and the reason turned out to be something Druid never told us about: some of our segments were many times larger than the size we had explicitly configured, and every ingestion task had reported success anyway.
+        </p>
+        <p>
+          This post is the writeup of that investigation. I&rsquo;ll build up the concepts first: what a segment is, what partitioning means, primary vs secondary partitioning, and how hash and range partitioning actually work, and then walk through the specific failure mode I hit, why it&rsquo;s silent, and how we fixed it. If you already know Druid well, you can skip to <a href="#the-problem">the problem</a>.
+        </p>
+
+        <h2 id="what-is-a-segment">What is a segment?</h2>
+        <p>
+          Druid doesn&rsquo;t store a table as one big file. It stores it as a large number of <strong>segments</strong>, self-contained, immutable columnar files that are the fundamental unit of storage, distribution, and query in the system. A segment typically holds a few million rows and is designed to be scanned in the low hundreds of milliseconds. Each segment carries its own dictionary-encoded columns, bitmap indexes, and compressed value arrays, so it can be queried entirely on its own.
+        </p>
+        <p>
+          Every segment is identified by four things:
+        </p>
+        <ul>
+          <li><strong>Datasource</strong>: the table it belongs to.</li>
+          <li><strong>Time interval</strong>: the chunk of time it covers (e.g. one day).</li>
+          <li><strong>Version</strong>: a timestamp used to resolve overwrites; newer versions shadow older ones.</li>
+          <li><strong>Partition number</strong> (shard spec): which slice of that time interval this segment is.</li>
+        </ul>
+        <p>
+          That partition number is where this whole story lives, so let&rsquo;s pull it apart.
+        </p>
+
+        <h2 id="primary-partitioning">Primary partitioning: time</h2>
+        <p>
+          Druid&rsquo;s <em>primary</em> partitioning is always by time. When you ingest, you choose a <code>segmentGranularity</code>: <code>HOUR</code>, <code>DAY</code>, <code>MONTH</code>, and so on. Each time chunk (Druid calls it an interval or &ldquo;time chunk&rdquo;) becomes a bucket, and all the rows whose timestamp falls in that chunk go into segments for that chunk.
+        </p>
+        <p>
+          We run <strong>daily</strong> segment granularity. So conceptually the data is first split into one bucket per day. This is what makes time-range queries cheap: a query for &ldquo;last Tuesday&rdquo; only has to touch the segments for that day and can prune everything else.
+        </p>
+
+        <h2 id="secondary-partitioning">Secondary partitioning: splitting within a time chunk</h2>
+        <p>
+          One day of data is usually far too large to be a single segment. So <em>within</em> each time chunk, Druid applies <strong>secondary partitioning</strong> to break the day into multiple segments. This is the knob that decides <em>how many</em> shards a day becomes and <em>which row goes into which shard</em>.
+        </p>
+        <p>
+          How big should each of those segments be? You tell Druid, with a single number in the ingestion config called <code>maxRowsPerSegment</code>, the rough number of rows you want per segment. We set it to <strong>5,000,000</strong>. So the mental model everyone carries is simple: <em>&ldquo;a day gets sliced into ~5M-row segments.&rdquo;</em> Hold onto that sentence. It is exactly the assumption that turned out to be wrong for one tenant.
+        </p>
+        <p>
+          Druid&rsquo;s native batch ingestion offers three secondary partitioning strategies. They differ entirely in how they assign a row to a shard.
+        </p>
+
+        <h3>1. Dynamic partitioning</h3>
+        <p>
+          The simplest one. Rows are appended to the current segment until it hits <code>maxRowsPerSegment</code>, then a new segment is started. It&rsquo;s essentially &ldquo;fill a bucket, start another bucket.&rdquo; It&rsquo;s cheap (single pass, no shuffle) but it gives you no control over <em>which</em> rows land together, so it doesn&rsquo;t help with query pruning beyond time.
+        </p>
+
+        <h3>2. Hash partitioning</h3>
+        <p>
+          You pick one or more <code>partitionDimensions</code>. Druid hashes those dimension values for each row and assigns the row to a shard based on the hash. All rows with the same partition-key value land in the same shard. This is great for pruning: if you query <code>WHERE orgId = X</code>, Druid can compute the hash of <code>X</code> up front and only read the shard(s) that value could be in.
+        </p>
+        <p>We hash by <code>orgId</code>. The core of the assignment is a Murmur3 hash, modulo the number of buckets:</p>
+        <pre><code>// HashPartitionFunction.MURMUR3_32_ABS
+return Math.abs(
+    Hashing.murmur3_32().hashBytes(serializedRow).asInt() % numBuckets
+);</code></pre>
+        <p>
+          Two things to notice here, because they matter later. First, this is <strong>deterministic</strong>: a given <code>orgId</code> always hashes to the same bucket. Second, the shard is chosen purely from the hash of the key: <em>nothing</em> in this function looks at how many rows share that key.
+        </p>
+
+        <h3>3. Range partitioning</h3>
+        <p>
+          You pick one or more dimensions, and Druid partitions by <em>ranges</em> of their values rather than by a hash. It samples the data, finds boundaries so that each range holds roughly the target number of rows, and assigns each row to the range it falls into. Segments end up sorted and non-overlapping on the range dimension, which enables both pruning <em>and</em> better compression (similar values sit together).
+        </p>
+        <p>
+          Range partitioning is more aware of distribution than hashing. It&rsquo;s literally trying to size ranges by row count. But it has its own sharp edge when a <em>single</em> value dominates, which I&rsquo;ll come back to.
+        </p>
+
+        <div class="callout">
+          <span class="label">The key idea</span>
+          <p>Hash and range partitioning both promise segments &ldquo;about <code>maxRowsPerSegment</code> big.&rdquo; But that promise quietly assumes your rows are spread reasonably evenly across the values you partition by. If one value owns most of the rows, the promise breaks and Druid never warns you that it did.</p>
+        </div>
+
+        <h2 id="the-problem">The problem: one hot key, one giant segment</h2>
+        <p>
+          Here&rsquo;s our setup, concretely:
+        </p>
+        <ul>
+          <li>Daily segment granularity.</li>
+          <li>Hash partitioning by <code>orgId</code>.</li>
+          <li><code>maxRowsPerSegment = 5,000,000</code>.</li>
+        </ul>
+        <p>
+          For the vast majority of tenants this is perfect. Their daily volume is modest, hashing spreads orgs across shards, and segments come out near the 5M target. Then we onboarded one very large tenant, roughly <strong>5 billion logs a week</strong>, all under a single <code>orgId</code>.
+        </p>
+        <p>
+          Now trace one row through the hash function above. Every row for that org shares the same <code>orgId</code>, so every row hashes to the <em>same</em> bucket. Hashing simply cannot split one key across shards. That&rsquo;s the whole point of it, it&rsquo;s what lets a query for <code>orgId = X</code> read just one shard. So a full day of that org&rsquo;s data piles into a single shard, and that segment blows straight past the 5M target, not by a little, by orders of magnitude.
+        </p>
+        <p>
+          Here&rsquo;s the deeper reason Druid doesn&rsquo;t catch this. Before ingesting, Druid decides how many shards to make for the day, and it does that with simple division: roughly <em>total rows for the day &divide; <code>maxRowsPerSegment</code></em>. If a day has 50 million rows and the target is 5 million, it plans for about 10 shards.
+        </p>
+        <p>
+          But that division only tells Druid <em>how many</em> shards to create. It silently assumes the rows will land in them evenly, about 5 million each. It never checks how rows are actually distributed across <code>orgId</code>s. So when one <code>orgId</code> owns most of the day&rsquo;s rows, Druid still plans those ~10 shards as if the load were even, then hashing dumps that entire org into <em>one</em> of them. That one shard ends up enormous while the other nine sit nearly empty. The plan and the reality quietly disagree, and nothing reconciles them.
+        </p>
+
+        <h3>It&rsquo;s worse than uniformly big. It&rsquo;s spiky</h3>
+        <p>
+          What made this genuinely hard to spot: this org&rsquo;s volume isn&rsquo;t even steady through the day. In one hour it might send <strong>~20 million rows</strong>, and in the next <strong>~300 million</strong>. So its segments aren&rsquo;t uniformly oversized: a few hours are monstrous and the rest look completely normal. There&rsquo;s no single number you can glance at to catch it; you have to inspect segments one by one to even see the pattern.
+        </p>
+
+        <h3>And Druid says nothing</h3>
+        <p>
+          This is the part that actually bothered me. When a segment comes out at 10&times; or 50&times; the configured target, there is:
+        </p>
+        <ul>
+          <li>no WARN log,</li>
+          <li>no metric,</li>
+          <li>no signal in the task report,</li>
+          <li>nothing in the Overlord UI.</li>
+        </ul>
+        <p>
+          The ingestion task simply reports <strong>success</strong>. From the operator&rsquo;s seat, the first symptom is &ldquo;queries for this tenant are slow,&rdquo; which sends you down the usual query-tuning rabbit hole. It took manual per-segment size inspection to find that the real cause was a handful of monster segments, oversized because of a partitioning assumption, not because of anything in the query path.
+        </p>
+
+        <h2 id="experiments">What I tried</h2>
+        <p>
+          Once I understood the mechanism, the interesting question was: can I fix it by changing the partitioning strategy? I spent a good while experimenting with segment layout across the different algorithms.
+        </p>
+        <p>
+          <strong>Lowering <code>maxRowsPerSegment</code></strong> doesn&rsquo;t help. It&rsquo;s only a target, and it assumes rows are spread evenly; a single hot key ignores it no matter what value you pick, because hashing still can&rsquo;t split that one key across shards.
+        </p>
+        <p>
+          <strong>Switching to range partitioning</strong> is more interesting. Range partitioning sizes ranges by actual row count, so in principle it reacts to distribution. But when one <em>single value</em> dominates, a range boundary can&rsquo;t split within that value: a range is <code>[value, value]</code> at best, and one value&rsquo;s rows can&rsquo;t be broken across two ranges without breaking the &ldquo;non-overlapping ranges&rdquo; guarantee that makes pruning work. Druid&rsquo;s own code even acknowledges this: there&rsquo;s a <code>// Future improvement: Handle skewed partitions better</code> TODO sitting in <code>PartitionBoundaries</code> that points right at this gap.
+        </p>
+        <p>
+          <strong>Adding a secondary partition dimension</strong> is the standard advice: partition by <code>(orgId, someOtherDim)</code> so the hot org gets broken up by a second dimension. The catch is that it only works if that second dimension actually <em>varies within the hot org</em>. If you pick something that&rsquo;s roughly constant for that tenant, you&rsquo;ve gained nothing. So the real work was finding a dimension with enough spread inside the hot key.
+        </p>
+
+        <h2 id="fix">What actually fixed it</h2>
+        <p>
+          Two changes together did it for our case:
+        </p>
+        <ul>
+          <li><strong>Hourly segment granularity</strong> instead of daily. This directly attacks the spikiness: each hour becomes its own set of segments, so a catastrophic hour is contained to that hour rather than dragging a whole day&rsquo;s segment up with it. It also shrinks the base unit of work, so the sizing math has a smaller, more even amount of data to slice per time chunk.</li>
+          <li><strong>Adding the data-plane <code>nodeId</code> as a secondary partition dimension.</strong> Unlike the natural candidates we&rsquo;d considered, <code>nodeId</code> actually <em>varies within the hot org</em>. That tenant&rsquo;s traffic is spread across many data-plane nodes. Partitioning by <code>(orgId, nodeId)</code> means the hot key is no longer a single hash bucket; it fans out across nodes, so no one shard has to hold the entire org&rsquo;s hour.</li>
+        </ul>
+        <p>
+          The reason this combination works is that each change fixes a different half of the problem. Hourly granularity handles the <em>temporal</em> skew (the 20M-vs-300M-rows-per-hour spikiness), and the <code>nodeId</code> secondary dimension handles the <em>key</em> skew (one <code>orgId</code> hashing to one bucket). Either one alone left a gap; both together brought the tenant&rsquo;s segments back down toward the target and the query regression went away.
+        </p>
+
+        <h2 id="takeaways">Takeaways</h2>
+        <ul>
+          <li>A Druid segment&rsquo;s size is a <em>best-effort target</em>, not a guarantee. <code>maxRowsPerSegment</code> assumes your partition key is well distributed.</li>
+          <li>Hash partitioning cannot split a single key. One hot value = one (huge) shard, by design.</li>
+          <li>Shard count is derived from <em>total rows &divide; <code>maxRowsPerSegment</code></em>, assuming rows spread evenly across buckets, so per-key skew is invisible to the sizing math.</li>
+          <li>Skew that&rsquo;s also spiky in time is especially nasty: some segments are fine, some are monsters, and averages hide it.</li>
+          <li>The fix was two-sided: <strong>hourly granularity</strong> for the temporal spikiness, and a <strong>secondary partition dimension that actually varies within the hot key</strong> (<code>nodeId</code>) for the key skew.</li>
+        </ul>
+        <p>
+          The thing I&rsquo;d underline is how much of this was diagnosis rather than a clever fix. The mechanism (total-rows sizing, deterministic hashing, one key to one bucket) is all knowable up front, but nothing surfaces it at ingestion time. Once you can actually <em>see</em> which segments blew past the target, picking the right combination of granularity and partition dimensions is the comparatively easy part.
+        </p>
+      </div>
+    </article>
+
+    <footer>
+      <p>&copy; <span id="year"></span> Vishesh Paliwal &middot; <a href="mailto:vishesh.23bcs10013@sst.scaler.com">say hi</a></p>
+    </footer>
+  </main>
+
+  <script src="../script.js"></script>
+</body>
+</html>

@@ -1,6 +1,6 @@
-# Portfolio &mdash; Vishesh Paliwal
+# Portfolio: Vishesh Paliwal
 
-A minimal, content-first personal site. No build step, no framework &mdash; just `index.html`, `styles.css`, and a tiny `script.js`.
+A minimal, content-first personal site. No build step, no framework: just `index.html`, `styles.css`, and a tiny `script.js`.
 
 ## Run locally
 ```bash
