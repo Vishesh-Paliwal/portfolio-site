@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Building a cost-effective CI pipeline at Rocketium &middot; Vishesh Paliwal</title>
+  <meta name="description" content="How we built an in-house CI service at Rocketium to handle dependent PRs, approvals, conflicts, and merge readiness without paying per-seat SaaS pricing." />
+  <meta name="author" content="Vishesh Paliwal" />
+  <meta property="og:title" content="Building a cost-effective CI pipeline at Rocketium" />
+  <meta property="og:description" content="How we built an in-house CI service to handle dependent PRs, approvals, conflicts, and merge readiness." />
+  <meta property="og:type" content="article" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>V</text></svg>" />
+  <link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+  <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle color theme">
+    <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+    <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+  </button>
+
+  <main>
+    <a href="index.html" class="backlink">&larr; writing</a>
+
+    <article>
+      <header class="post-header">
+        <h1>Building a cost-effective CI pipeline at Rocketium</h1>
+        <p class="post-meta">
+          <span>Jul 19, 2026</span>
+          <span class="dot">&middot;</span>
+          <span>~10 min read</span>
+        </p>
+        <p style="margin-top:14px">
+          <span class="tag">ci</span>
+          <span class="tag">github</span>
+          <span class="tag">devops</span>
+        </p>
+      </header>
+
+      <div class="prose">
+        <figure>
+          <img src="images/ci-lets-get-started.png" alt="Let's get started" />
+        </figure>
+
+        <p>
+          Hey everyone. This post walks through how I implemented a cost-effective CI pipeline at Rocketium: the context behind the need, the choices we made, and how the integration side actually works.
+        </p>
+
+        <h2 id="aim">Aim of the CI pipeline</h2>
+        <p>
+          We are a team of around 15 devs, shipping code on an almost daily basis. As the product grows, it gets harder for someone to manually check:
+        </p>
+        <ol>
+          <li>The PRs ready to go live</li>
+          <li>Whether a live PR has any dependent PR that needs to go live with it</li>
+          <li>New conflicts that arise in a ready-to-go PR due to a recent merge</li>
+          <li>Status across multiple test suites</li>
+        </ol>
+        <p>
+          And then finally deciding whether the build can go live or not. Note that many times we might want to go ahead with deployment even if tests fail. With those things in mind, we wanted a quick pipeline that can handle all these cases, and also give enough visibility and control over the whole integration process.
+        </p>
+
+        <h2 id="why-not-existing-tools">Why not choose available existing tools</h2>
+        <p>
+          Common tools that come to mind for such tasks are Mergify, Aviator, GitHub merge queues, Jenkins, and possibly many more around the web. Most of them cost around $15&ndash;20 per seat per month, which is quite high if you don&rsquo;t have a very complex CI workflow. Another point: even integrating them might not solve all the cases we want, the way we want.
+        </p>
+        <p>
+          Hence it was finally decided to build an in-house service that would power Continuous Integration at Rocketium. Let&rsquo;s move on to how the CI pipeline actually functions.
+        </p>
+
+        <h2 id="ci-service">CI service</h2>
+        <p>
+          The CI part is handled with a Node.js service that runs on scheduled times triggered via GitHub Actions. Hence no need to host the code continuously &mdash; only the GitHub Action run, which takes around 1&ndash;2 minutes.
+        </p>
+        <p>
+          The merge process we follow is: first we evaluate which PRs are ready to go live. Those ready get merged to a <code>patch</code> branch. A downstream PR is then created from <code>patch</code> to <code>main</code> with changes from all the PRs. The <code>patch</code> branch is deployed to staging. If all test suites pass, we can safely merge the PR to <code>main</code>.
+        </p>
+
+        <h2 id="overall-design">Overall design for the service</h2>
+        <pre><code>Controllers/
+  AppController
+
+Services/
+  ConfigurationService
+  DependencyAnalysisService
+  DownstreamPrService
+  GithubApiService
+  LoggerService
+  PRMergeService
+  ReportGenerationService
+  RepoScannerService
+  SlackNotificationService
+
+Utils/
+  DependencyParser
+  GraphUtils
+
+Models/
+  ConnectedComponents
+  PRData</code></pre>
+
+        <h2 id="orchestration">Orchestration at the controller</h2>
+        <pre><code>this.logger.info("Starting CI automation scan and merge");
+
+// 1. Validate configuration
+const validationResult = this.configService.validateConfiguration();
+if (!validationResult.isValid) {
+  const errorMessage = `Configuration validation failed: ${validationResult.errors.join(', ')}`;
+  this.logger.error(errorMessage);
+  throw new Error(errorMessage);
+}
+
+// 2. Initialize GitHub API service
+const githubToken = this.configService.getGitHubToken();
+const githubWriteToken = this.configService.getGitHubWriteToken();
+this.githubApiService.initialize(githubToken);
+this.githubApiService.initializeWriteOperations(githubWriteToken);
+
+// 3. Scan repositories
+this.logger.info("Phase 1: Scanning repositories for PRs");
+const allPRs = await this.scannerService.scanRepositories();
+
+// 4. Analyze dependencies
+this.logger.info("Phase 2: Analyzing PR dependencies");
+const analysisResult = this.analysisService.analyzeComponents(allPRs);
+
+// 5. Execute merges for ready components
+this.logger.info("Phase 3: Executing merges for ready components");
+const mergeResult = await this.mergeService.mergeReadyComponents(
+  analysisResult.connectedComponents
+);
+
+// Check for critical failure
+if (mergeResult.criticalFailure) {
+  this.logger.error("Critical failure detected during merge process");
+
+  this.logger.info("Sending critical failure alert to Slack");
+  await this.slackService.sendCriticalFailureAlert(
+    mergeResult.criticalFailure.failedPR,
+    mergeResult.criticalFailure.componentSize,
+    mergeResult.criticalFailure.reason
+  );
+
+  const scanReport = this.reportService.generateReport(analysisResult, allPRs);
+  const criticalFailureReport = `\n\n **CRITICAL FAILURE** \n` +
+    `PR ${mergeResult.criticalFailure.failedPR.repo}#${mergeResult.criticalFailure.failedPR.number} failed to merge.\n` +
+    `This PR is part of a component with ${mergeResult.criticalFailure.componentSize} PRs.\n` +
+    `Reason: ${mergeResult.criticalFailure.reason}\n` +
+    `Process stopped at: ${mergeResult.criticalFailure.timestamp}`;
+
+  return `${scanReport}${criticalFailureReport}\n\n${mergeResult.summary}\n`;
+}
+
+// 6. Generate comprehensive report
+this.logger.info("Phase 4: Generating comprehensive report");
+const scanReport = this.reportService.generateReport(analysisResult, allPRs);
+const fullReport = `${scanReport}\n\n${mergeResult.summary}`;
+
+// 7. Send Slack notification with merge results
+this.logger.info("Phase 5: Sending Slack notification");
+await this.slackService.sendScanResults(analysisResult, allPRs, mergeResult);
+
+// 8. Create downstream PRs (patch -> main) if PRs were merged successfully
+this.logger.info("Phase 6: Creating downstream PRs");
+const mergedPRs = this.extractMergedPRs(mergeResult);
+const downstreamResult = await this.downstreamPRService.createDownstreamPRs(mergedPRs, false);
+
+const finalReport = `${fullReport}\n\n${downstreamResult.summary}`;
+
+this.logger.info("CI automation scan and merge completed successfully");
+return finalReport;</code></pre>
+        <p>Going through each phase one by one.</p>
+
+        <h2 id="configuration">Configuration and GitHub services initialization</h2>
+        <p>
+          This sets up and validates the basic setup config, like:
+        </p>
+        <ul>
+          <li>how many and which repos do we have to consider</li>
+          <li>what is the target branch (like we want to merge those targeted to <code>patch</code>)</li>
+          <li>what is the minimum approval count required</li>
+          <li>do we have all necessary tokens</li>
+        </ul>
+        <p>
+          In the first two steps we are just configuring and validating basic things: min approval count is not set to 0 by mistake, read or write tokens are not empty, etc. Then we initialize Octokit for GitHub operations via the GitHub services.
+        </p>
+
+        <h2 id="scan-repos">Scan repos</h2>
+        <p>
+          After all initialization is done we scan all repos and gather data for all the PRs targeted to <code>patch</code>, and enrich it.
+        </p>
+        <pre><code>const prData: PRData = {
+  number: pr.number,
+  title: pr.title,
+  url: pr.html_url,
+  mergeable,
+  mergeStateStatus: pr.merge_state_status || 'UNKNOWN',
+  author: { login: pr.user?.login || 'unknown' },
+  createdAt: pr.created_at,
+  labels: pr.labels.map((label: any) => ({ name: label.name })),
+  approvalCount,
+  repo,
+  baseBranch: pr.base.ref,
+  body: pr.body || '',
+  dependencies
+};</code></pre>
+        <p>
+          A crucial step here is that we also add a <code>dependencies</code> array, which later helps us decide what PRs can be merged. This can be a case where one PR is ready, tested, and approved, but a PR in another repo that it depends on is not ready to be merged &mdash; in that case we have to skip even the ready PR. To form the dependency array we extract the <code>depends on</code> keyword from the PR body. Now this becomes the developers&rsquo; responsibility: add <code>depends on [PR No]</code> in the PR description so we can manage it in CI.
+        </p>
+
+        <h2 id="analyzing-components">Analyzing components</h2>
+        <p>
+          Dependencies play an important role in deciding what gets merged. To manage this easily, we first form a graph out of the data we collected.
+        </p>
+        <figure>
+          <img src="images/ci-connected-components.png" alt="Grouping PRs into connected components based on dependencies" />
+          <figcaption>PRs that must go live together form connected components in the dependency graph.</figcaption>
+        </figure>
+        <p>
+          By making a graph we have all the components ready with us that should go live together. Getting all connected components of a graph is a standard DSA problem with fairly straightforward code.
+        </p>
+        <p>For example:</p>
+        <ul>
+          <li>PR A in repo X depends on PR B in repo Y</li>
+          <li>PR B in repo Y depends on PR A in repo X</li>
+          <li>PR C in repo X is not dependent on anything</li>
+        </ul>
+        <p>
+          Then we will have formed two connected components:
+        </p>
+        <ul>
+          <li>C1 &rarr; [PR A, PR B]</li>
+          <li>C2 &rarr; [PR C]</li>
+        </ul>
+        <p>
+          Once we have these components, it is fairly simple to decide that if all PRs in a component are ready to go live, then we can merge that component to <code>patch</code>.
+        </p>
+
+        <h2 id="merging">Merging ready components</h2>
+        <p>
+          Even after an initial check on what is ready to go live, with our approach three kinds of cases may arise while merging:
+        </p>
+        <ol>
+          <li>Every component gets merged properly one after the other.</li>
+          <li>
+            While merging PRs of a component we can encounter a new conflict because of previous PRs we just merged. But if this PR does not have any dependencies, and is a single PR in its component, we can skip it for now and move on to try merging other components.
+          </li>
+          <li>
+            If there is a merge conflict and the component had multiple PRs, then we call it a <strong>critical failure</strong> and stop the whole process altogether. Why? Say a component had two PRs, one backend and one frontend: if the backend one got merged and the frontend one fails due to a merge conflict, we cannot move forward with deployment until the frontend PR also gets merged or we revert the backend one, since they are dependent on each other.
+          </li>
+        </ol>
+
+        <h2 id="critical-failure">Handling the critical failure case</h2>
+        <p>
+          In the case of critical failure as discussed above, we do two things:
+        </p>
+        <ul>
+          <li>First we add a label to the PR on GitHub, so that we skip processing it next time until the developer removes it and the issue is solved.</li>
+          <li>Second we send a Slack alert so the team knows about the situation.</li>
+        </ul>
+
+        <h2 id="downstream-pr">Creating the downstream PR</h2>
+        <p>
+          If no critical failure happened, we make the downstream PR from <code>patch</code> to <code>main</code>, and then send a detailed summary over a Slack channel highlighting total PRs, which were ready to merge, what the connected components were, and which components got merged and are part of the downstream PR now.
+        </p>
+        <p>
+          That covers the CI merge flow: scanning, dependency analysis via connected components, merging ready units to <code>patch</code>, and opening the downstream PR to <code>main</code>.
+        </p>
+      </div>
+    </article>
+
+    <footer>
+      <p>&copy; <span id="year"></span> Vishesh Paliwal &middot; <a href="mailto:vishesh.23bcs10013@sst.scaler.com">say hi</a></p>
+    </footer>
+  </main>
+
+  <script src="../script.js"></script>
+</body>
+</html>

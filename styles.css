@@ -415,7 +415,15 @@ footer {
 }
 
 /* figure caption */
-.prose figure { margin: 0; }
+.prose figure { margin: 28px 0; }
+.prose figure img {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
 .prose figcaption {
   font-family: var(--mono);
   font-size: 0.75rem;
