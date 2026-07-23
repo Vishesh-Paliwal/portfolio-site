@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Multi-agent debate for diagnostics &middot; Vishesh Paliwal</title>
+  <meta name="description" content="How I built a two-phase multi-agent diagnostic system: extract and tier evidence first, then run a specialist panel that debates hypotheses with grounded tool use. Patterns that transfer beyond the original domain." />
+  <meta name="author" content="Vishesh Paliwal" />
+  <meta property="og:title" content="Multi-agent debate for diagnostics" />
+  <meta property="og:description" content="Two-phase pipelines, evidence tiers, specialist panels, and why debate needs a shared board — architecture patterns for diagnostic multi-agent systems." />
+  <meta property="og:type" content="article" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>V</text></svg>" />
+  <link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+  <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle color theme">
+    <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+    <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+  </button>
+
+  <main>
+    <a href="index.html" class="backlink">&larr; blog</a>
+
+    <article>
+      <header class="post-header">
+        <h1>Multi-agent debate for diagnostics</h1>
+        <p class="post-meta">
+          <span>Jul 24, 2026</span>
+          <span class="dot">&middot;</span>
+          <span>~14 min read</span>
+        </p>
+        <p style="margin-top:14px">
+          <span class="tag">multi-agent</span>
+          <span class="tag">langgraph</span>
+          <span class="tag">architecture</span>
+        </p>
+      </header>
+
+      <div class="prose">
+        <p>
+          Picture a familiar failure mode. A team runs a sequence of batches &mdash; experiments, jobs, deployments, production runs. The first few look fine. Somewhere around batch five or six, yield collapses, latency spikes, or a metric that used to be stable goes wrong. The people responsible already have the past runs sitting in PDFs, spreadsheets, and CSVs. What they need is not another chat box that &ldquo;summarizes the folder.&rdquo; They need a system that can turn that mess into structured evidence, hold competing explanations accountable to the numbers, and produce a recommendation they can actually act on.
+        </p>
+        <p>
+          I built that kind of system at Lemnisca for fermentation diagnostics: scientists uploaded run files, asked why a late batch failed, and got a structured report from a panel of specialist agents that had debated hypotheses against the data. This post is not a product tour of that domain. It is a writeup of the architecture choices that made the system trustworthy enough to ship &mdash; and why those choices transfer to any diagnostic workflow with the same shape: messy multi-run inputs, uncertain root cause, and a need for auditable reasoning.
+        </p>
+
+        <h2 id="the-shape">The shape of the problem</h2>
+        <p>
+          Most &ldquo;ask an LLM about my data&rdquo; products collapse three different jobs into one prompt:
+        </p>
+        <ol>
+          <li>Turn heterogeneous files into reliable numbers.</li>
+          <li>Separate what was measured from what was inferred.</li>
+          <li>Argue among plausible causes until one survives contact with the evidence.</li>
+        </ol>
+        <p>
+          Those jobs have different failure modes. Extraction invents cells. Analysis mixes measured yields with literature constants and then forgets which was which. Diagnosis becomes a confident monologue because nothing in the loop is forced to disagree. If you are building for manufacturing QA, clinical trial protocol review, incident postmortems, or batch experiment debugging, you hit the same three jobs. Treating them as one agent is how you get fluent wrong answers.
+        </p>
+        <p>
+          So I split the system into two phases with a hard boundary between them.
+        </p>
+
+        <h2 id="two-phases">Two phases, disk as the contract</h2>
+        <pre><code>upload + question
+        │
+        ▼
+┌─────────────────────┐
+│ Phase 1: extract &amp;  │
+│ analyze             │  → data_packages/&lt;id&gt;/
+└─────────────────────┘
+        │  (read from disk only)
+        ▼
+┌─────────────────────┐
+│ Phase 2: diagnostic │
+│ panel / debate      │  → report.json + debate.json
+└─────────────────────┘</code></pre>
+        <p>
+          Phase 1 is one-shot per upload: triage files, extract tables, run analysis tiers, audit, chart, package. Phase 2 is one-shot per debate: read the package, fan out specialists, moderate cross-examination, vote, synthesize, write the report.
+        </p>
+        <p>
+          The Phase 1 analysis agents are not stuck in pure text. They get a real tool surface: a full Python environment they can drive via <code>execute_python</code> (pandas, numpy, whatever the computation needs), and Gemini CLI as a shell process for PDF/DOCX extraction when the file is not already tabular. That matters. Diagnostic quality upstream is limited by whether the agent can actually compute and parse, not just narrate. Every Python invocation is traced &mdash; code, stdout, stderr, duration &mdash; so you can later see whether a bad number came from bad math or bad input.
+        </p>
+        <p>
+          The important part is the handoff. There is no in-memory state shared between phases. Everything Phase 2 needs lives on disk under a single bundle directory. That sounds boring until you need to re-run only the debate after fixing a specialist prompt, or re-extract after fixing a PDF table, without paying for the other phase again. Independently re-runnable stages are also how you get crash recovery for free: a mid-debate failure still leaves completed turns on disk.
+        </p>
+        <p>
+          General pattern: if your pipeline has a &ldquo;make the world structured&rdquo; step and a &ldquo;reason over the structure&rdquo; step, make the artifact between them the source of truth. Memory handoffs hide bugs; directories make them inspectable.
+        </p>
+
+        <h2 id="evidence-tiers">Label confidence before anyone debates</h2>
+        <p>
+          Phase 1&rsquo;s analysis is not one agent that computes everything it can think of. It is three sequential ReAct agents with different trust mandates:
+        </p>
+        <ul>
+          <li><strong>Tier A &mdash; measured / direct.</strong> Things that come off the measurement surface: volumes, feeds, growth rates from observed curves, cross-run KPI tables.</li>
+          <li><strong>Tier B &mdash; derived.</strong> One step of math from measurements: per-batch rates from timecourses, apparent yields, offgas-derived rates when the sensors exist.</li>
+          <li><strong>Tier C &mdash; modeled.</strong> Assumption-heavy estimates that use literature constants. Useful, but dangerous if cited as if they were measured.</li>
+        </ul>
+        <p>
+          Why sequential, not parallel? Tier B reads Tier A&rsquo;s derived tables. Tier C reads both. Each tier is told not to recompute what the previous one already produced. That saves tokens, prevents drift, and makes the dependency graph explicit in the prompts and the checklists.
+        </p>
+        <p>
+          Why three tiers at all? Because later, when a specialist cites a number, the tier label is the warning label. &ldquo;This yield was measured&rdquo; and &ldquo;this oxygen uptake was estimated under RQ = 1.0&rdquo; should not carry the same epistemic weight. In any domain with calculations on top of sensors &mdash; energy metering, clinical labs, manufacturing MES, A/B experiment platforms &mdash; you want the same split: measured, derived, modeled. Without it, debate agents confidently treat assumptions as facts.
+        </p>
+
+        <h2 id="audit-invariant">Capture everything; feed almost nothing</h2>
+        <p>
+          Every Phase 1 run leaves a paper trail: cell-level lineage for extracted CSVs, a JSONL of every <code>execute_python</code> call with code and stdout, and an agent trace of reasoning plus tool calls. Phase 2 does the same for every specialist turn and every moderator decision.
+        </p>
+        <p>
+          There is an invariant that matters more than the file layout: the audit directories are never sent back into the LLMs at runtime. They exist for humans. Capture can be rich and full-fidelity; production prompts stay lean. If you mix those two goals, you either lose the ability to debug, or you drown the agent in its own logs until it starts citing its previous hallucinations as evidence.
+        </p>
+        <p>
+          Same idea applies outside this stack. Your observability pipeline and your agent context window are different products. Do not pretend they are the same buffer.
+        </p>
+
+        <h2 id="specialist-panel">A panel beats a polymath</h2>
+        <p>
+          Phase 2 is a diagnostic panel: seven specialists with narrow domains, plus a moderator that owns the shared hypothesis board. In our case the domains were strain, kinetics, media, contamination, scale-up, downstream, and data consistency. The names are domain-specific. The structure is not.
+        </p>
+        <p>
+          For an incident postmortem you might have networking, storage, deploy, client, and capacity specialists. For manufacturing yield loss: process, raw materials, equipment, measurement systems, and scheduling. The rule that transfers is: give each agent a lane, a &ldquo;stay in your lane&rdquo; system prompt, and the same tool surface over the evidence bundle. Depth comes from specialization; coverage comes from the panel.
+        </p>
+        <p>
+          The pipeline looks like this:
+        </p>
+        <pre><code>intake
+  → initial_analysis   (7 specialists in parallel, ReAct)
+  → consolidation      (moderator clusters claims → hypotheses)
+  → cross_examination  (loop: moderator picks round type + panel)
+  → stance_vote        (per-hypothesis support / refute / insufficient)
+  → synthesis
+  → report_writer / debate_writer</code></pre>
+        <p>
+          Initial analysis is a fanout. Consolidation is deliberately a single moderator call: free-form specialist prose becomes a small set of hypotheses on a shared board. Without that clustering step, debate is seven people talking past each other.
+        </p>
+
+        <h2 id="shared-board">Debate needs a board, not a chat log</h2>
+        <p>
+          The mutable shared state in Phase 2 is a <code>HypothesisBoard</code>. Specialists do not &ldquo;win&rdquo; by writing longer paragraphs. They emit typed actions: add evidence, update stance, propose a merge, argue for rejection, request more data. Actions apply immediately so the next speaker sees the consequences.
+        </p>
+        <p>
+          The moderator picks round types on purpose:
+        </p>
+        <ul>
+          <li><strong>cross-exam</strong> &mdash; argue one or two specific hypotheses</li>
+          <li><strong>generative</strong> &mdash; propose missing hypotheses</li>
+          <li><strong>reconciliation</strong> &mdash; decide whether two hypotheses are the same claim</li>
+          <li><strong>challenge</strong> &mdash; force someone to argue against an emerging consensus</li>
+          <li><strong>call vote</strong> &mdash; terminate the loop</li>
+        </ul>
+        <p>
+          Loop exit conditions matter too: consensus or rejection on every hypothesis, moderator calls the vote, round budget hit, or several rounds with no new board actions. Without those stops, multi-agent systems burn money performing disagreement theater.
+        </p>
+        <p>
+          If you are building any deliberative agent system &mdash; code review panels, security threat modeling, medical differential diagnosis assist &mdash; typed shared state beats appending messages to a transcript. A transcript is history. A board is the object under dispute.
+        </p>
+
+        <h2 id="tool-enforcement">Make evidence fetching non-optional</h2>
+        <p>
+          Specialists run as ReAct agents with tools scoped to the bundle: tier reports, assumptions sections, cross-run KPI tables, single metrics, timecourses, derived volume tables. Hard rules per turn include a tool-call budget, a wall-clock budget, and one rule that paid for itself immediately:
+        </p>
+        <p>
+          If a specialist emits zero tool calls, retry once with a stern &ldquo;you must fetch evidence&rdquo; addendum.
+        </p>
+        <p>
+          The most common failure mode in diagnostic agents is not bad math. It is confident fabrication of a number that looked plausible in training data. Forcing at least one fetch before a claim is allowed to land on the board is cheap insurance &mdash; roughly ten percent extra model calls in our runs, and a large drop in invented numerics.
+        </p>
+        <p>
+          One asymmetry I kept on purpose: initial analysis and discussion turns get tools; the final stance vote sees only the rendered board. Voting is meant to be calibration over already-gathered evidence, not a second research phase. That choice is still debatable &mdash; if votes only see evidence titles, consensus can become too easy. The general lesson is still useful: decide which nodes are allowed to gather facts and which nodes are only allowed to weigh them.
+        </p>
+
+        <h2 id="schemas">Schema design is part of the agent architecture</h2>
+        <p>
+          A quieter set of decisions lived in the Pydantic models. Model providers do not all honor the JSON Schema you think you wrote. In our stack, Gemini&rsquo;s schema translator stripped <code>oneOf</code> and <code>discriminator</code>, which silently broke discriminated unions into &ldquo;last arm wins.&rdquo; Tuple tool args became <code>prefixItems</code>, which the API rejected outright.
+        </p>
+        <p>
+          The fix was unglamorous and correct: flatten evidence references into one model with optional fields and a <code>type</code> literal; use <code>list[float]</code> instead of tuples; pin the SDK versions that actually work. The wire JSON still looks clean after <code>model_dump(exclude_none=True)</code>, so the UI never cared.
+        </p>
+        <p>
+          If your multi-agent system depends on structured outputs, treat schema compatibility as a first-class design constraint, not a serialization detail. The agent graph is only as reliable as the types it can round-trip.
+        </p>
+
+        <h2 id="errors">Do not swallow real bugs as &ldquo;no contribution&rdquo;</h2>
+        <p>
+          Early versions had the classic agent-service pattern: catch <code>Exception</code>, return a sentinel, keep the panel moving. That hides <code>AttributeError</code> and <code>TypeError</code> behind polite &ldquo;this specialist had nothing to say&rdquo; outcomes. I narrowed the retryable set to transient LLM failures &mdash; timeouts, recursion limits, validation errors, connection issues &mdash; and let real bugs raise.
+        </p>
+        <p>
+          Multi-agent systems amplify this mistake because one quiet failure looks like healthy disagreement. Prefer loud engineering bugs and soft model failures, not the reverse.
+        </p>
+
+        <h2 id="what-transfers">What transfers to systems like yours</h2>
+        <p>
+          Strip away fermentation and the reusable architecture is:
+        </p>
+        <ol>
+          <li><strong>Split extract/analyze from diagnose/debate.</strong> Put a durable bundle between them.</li>
+          <li><strong>Tier evidence by trust.</strong> Measured, derived, modeled &mdash; and force later agents to read the label.</li>
+          <li><strong>Specialize the panel; centralize the board.</strong> Parallel opinions, one mutable object of dispute.</li>
+          <li><strong>Moderate with round types and stop conditions.</strong> Disagreement is a tool, not a vibe.</li>
+          <li><strong>Enforce tool use when numerics matter.</strong> Retry empty-handed turns.</li>
+          <li><strong>Persist every call incrementally.</strong> Aggregate the viewer transcript at the end.</li>
+          <li><strong>Keep audit trails out of model context.</strong> Humans get fidelity; agents get lean prompts.</li>
+          <li><strong>Design schemas for the model you actually call.</strong> Flat often beats elegant.</li>
+        </ol>
+        <p>
+          That list is useful whether you are debugging a failed bioreactor batch, a flaky CI component, a production incident, or a clinical study arm that diverged from protocol. The domain experts change. The control plane does not have to.
+        </p>
+
+        <h2 id="honest-limits">Honest limits</h2>
+        <p>
+          Architecture does not remove product failure modes. Early runs could still collapse into all-consensus too quickly, especially when challenge rounds were weak and votes saw evidence titles rather than full bodies. Some evidence objects landed with empty numeric bodies until the schema forced fields. Data-request actions could queue with nothing to service them. Those are all fixable &mdash; tighter challenge prompts, tools on the vote phase, schema-enforced numerics, a worker for request queues &mdash; and naming them is part of shipping a diagnostic system people will trust.
+        </p>
+        <p>
+          The goal was never a panel that always agrees. It was a panel that cannot quietly invent the data it claims to have read, and a report that shows how it got there.
+        </p>
+
+        <h2 id="closing">Closing</h2>
+        <p>
+          Multi-agent debate is easy to demo and hard to operationalize. The version that worked for us was less about clever personas and more about boring systems work: a disk-backed contract between phases, confidence tiers on every number, a typed hypothesis board, hard tool-use rules, and traces that humans can audit without stuffing those traces back into the next prompt.
+        </p>
+        <p>
+          If your problem looks like &ldquo;late run failed, past runs exist, root cause is contested,&rdquo; start there. The specialists are the skin. The pipeline is the skeleton.
+        </p>
+      </div>
+    </article>
+
+    <footer>
+      <p>&copy; <span id="year"></span> Vishesh Paliwal &middot; <a href="mailto:vishesh.23bcs10013@sst.scaler.com">say hi</a> &middot; <a href="https://cal.com/vishesh-paliwal/30min">schedule a call</a></p>
+    </footer>
+  </main>
+
+  <script src="../script.js"></script>
+</body>
+</html>
